@@ -5,7 +5,7 @@ url = "http://192.168.252.155:8080/video"
 cap = cv2.VideoCapture(url)
 
 total_count = 0
-line_position = 300
+line_x = 400
 
 previous_centers = []
 
@@ -18,27 +18,18 @@ while True:
 
     frame = cv2.resize(frame,(800,600))
 
-    # Convert to grayscale
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    blur = cv2.GaussianBlur(gray,(5,5),0)
 
-    # Blur to reduce noise
-    blur = cv2.GaussianBlur(gray,(7,7),0)
+    # threshold to isolate tape
+    _, thresh = cv2.threshold(blur,180,255,cv2.THRESH_BINARY_INV)
 
-    # Adaptive threshold
-    thresh = cv2.adaptiveThreshold(
-        blur,255,
-        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-        cv2.THRESH_BINARY_INV,
-        11,2)
-
-    # Morphological cleanup
     kernel = np.ones((3,3),np.uint8)
     thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
 
-    # Find contours
     contours,_ = cv2.findContours(
         thresh,
-        cv2.RETR_EXTERNAL,
+        cv2.RETR_TREE,
         cv2.CHAIN_APPROX_SIMPLE)
 
     current_centers = []
@@ -47,56 +38,58 @@ while True:
 
         area = cv2.contourArea(c)
 
-        # Filter noise
-        if area < 80 or area > 5000:
+        # pocket size filter
+        if area < 200 or area > 1200:
             continue
 
-        # Detect shape
-        peri = cv2.arcLength(c, True)
-        approx = cv2.approxPolyDP(c, 0.04 * peri, True)
+        x,y,w,h = cv2.boundingRect(c)
 
-        # Only rectangles (4 corners)
-        if len(approx) == 4:
+        aspect = w/float(h)
 
-            x,y,w,h = cv2.boundingRect(approx)
-            aspect = w / float(h)
+        if 0.3 < aspect < 1.2:
 
-            if 0.5 < aspect < 3:
+            # crop slightly inside the pocket
+            roi = gray[y+3:y+h-3, x+3:x+w-3]
 
-                cx = int(x + w/2)
-                cy = int(y + h/2)
+            if roi.size == 0:
+                continue
+
+            mean_intensity = np.mean(roi)
+
+            # if component present (darker)
+            if mean_intensity < 140:
+
+                cx = int(x+w/2)
+                cy = int(y+h/2)
 
                 current_centers.append((cx,cy))
 
-                # Draw rectangle
+                # draw green rectangle
                 cv2.rectangle(frame,(x,y),(x+w,y+h),(0,255,0),2)
-
-                # Draw center
                 cv2.circle(frame,(cx,cy),4,(0,0,255),-1)
 
-                # Compare with previous frame
                 for px,py in previous_centers:
 
-                    distance = abs(cx-px) + abs(cy-py)
+                    if abs(cx-px)+abs(cy-py) < 30:
 
-                    if distance < 20:
-
-                        if py < line_position and cy >= line_position:
+                        if px < line_x and cx >= line_x:
                             total_count += 1
+
+            else:
+                # empty pocket (draw red)
+                cv2.rectangle(frame,(x,y),(x+w,y+h),(0,0,255),2)
 
     previous_centers = current_centers
 
-    # Draw counting line
-    cv2.line(frame,(0,line_position),(800,line_position),(255,0,255),2)
+    cv2.line(frame,(line_x,0),(line_x,600),(255,0,255),2)
 
-    # Display count
     cv2.putText(frame,
                 "Total Count: "+str(total_count),
                 (20,40),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 1,(0,0,255),2)
 
-    cv2.imshow("SMD Detector",frame)
+    cv2.imshow("Detector",frame)
     cv2.imshow("Threshold",thresh)
 
     if cv2.waitKey(1)==27:
